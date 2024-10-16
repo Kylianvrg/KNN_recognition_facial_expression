@@ -6,79 +6,75 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# LBP parameters
-radius = 16
-n_points = 8 * radius
+# LBP parameters (Radius and points)
+rad = 8
+points = 8 * rad
 
-# Function to extract LBP features from an image
-def extract_lbp_features(image):
-    lbp = local_binary_pattern(image, n_points, radius, method='uniform')
-    hist, _ = np.histogram(lbp, bins=n_points + 3, range=(0, n_points + 2))
-    hist = hist / (hist.sum() + 1e-6)  # Normalization
+# Function to extract LBP features from the image
+def lbp_features_extraction(img):
+    lbp = local_binary_pattern(img, points, rad, method='uniform')
+    hist, _ = np.histogram(lbp, bins=points + 3, range=(0, points + 2))
+    hist = hist / (hist.sum() + 1e-6)  # Normalize histogram
     return hist
 
-# Function to load images and labels from the dataset
-def load_data(directory):
-    images = []
-    labels = []
+# Function to load dataset images and their labels
+def load_dataset(data_dir):
+    img_data = []
+    label_data = []
     emotions = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']  # Emotion categories
     
     for emotion in emotions:
-        emotion_dir = os.path.join(directory, emotion)
-        for file in os.listdir(emotion_dir):
-            img_path = os.path.join(emotion_dir, file)
-            image = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-            if image is not None:
-                image = cv2.resize(image, (48, 48))
-                image = cv2.equalizeHist(image)  # Histogram equalization
-                features = extract_lbp_features(image)  # Extract LBP features
-                images.append(features)
-                labels.append(emotion)
+        emotion_path = os.path.join(data_dir, emotion)
+        for filename in os.listdir(emotion_path):
+            img_full_path = os.path.join(emotion_path, filename)
+            img = cv2.imread(img_full_path, cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                img_resized = cv2.resize(img, (48, 48))
+                img_resized = cv2.equalizeHist(img_resized)  # Apply histogram equalization
+                features = lbp_features_extraction(img_resized)  # Extract LBP features
+                img_data.append(features)
+                label_data.append(emotion)
     
-    return np.array(images), np.array(labels)
+    return np.array(img_data), np.array(label_data)
 
-# Load training and testing data
-train_data, train_labels = load_data('train')
-test_data, test_labels = load_data('test')
 
-# Standardize the data
+# Loading training and testing data
+train_x, train_y = load_dataset('train')
+test_x, test_y = load_dataset('test')
+
+# Standardizing the dataset
 scaler = StandardScaler()
-train_data = scaler.fit_transform(train_data)
-test_data = scaler.transform(test_data)
+train_x = scaler.fit_transform(train_x)
+test_x = scaler.transform(test_x)
 
-# Apply PCA for dimensionality reduction
-n_components = min(50, train_data.shape[1])  # Adjust number of components based on input size
-pca = PCA(n_components=n_components)
-train_data = pca.fit_transform(train_data)
-test_data = pca.transform(test_data)
+# Hyperparameter tuning using grid search for KNN
+param_search = {'n_neighbors': [3, 5, 10, 15, 20, 25, 30, 35, 40, 50], 'weights': ['uniform', 'distance']}
+knn_grid = GridSearchCV(KNeighborsClassifier(), param_search, cv=5)
+knn_grid.fit(train_x, train_y)
 
-# Grid search to find the best hyperparameters for KNN
-param_grid = {'n_neighbors': [3, 5, 10, 15, 20, 25, 30, 35, 40], 'weights': ['uniform', 'distance']}
-grid = GridSearchCV(KNeighborsClassifier(), param_grid, cv=5)
-grid.fit(train_data, train_labels)
+# Output the best parameters chosen by grid search
+print("Optimal parameters found: ", knn_grid.best_params_)
 
-# Output the best parameters
-print("Best parameters found: ", grid.best_params_)
+# Training KNN model with optimal parameters
+best_params = knn_grid.best_params_
+knn_model = KNeighborsClassifier(n_neighbors=best_params['n_neighbors'], weights=best_params['weights'])
+knn_model.fit(train_x, train_y)
 
-# Train the KNN model using the best parameters
-best_params = grid.best_params_
-knn = KNeighborsClassifier(n_neighbors=best_params['n_neighbors'], weights=best_params['weights'])
-knn.fit(train_data, train_labels)
+# Model evaluation on the test set
+test_predictions = knn_model.predict(test_x)
+print("Classification Report:\n", classification_report(test_y, test_predictions))
+print("Accuracy:", accuracy_score(test_y, test_predictions))
 
-# Evaluate the model on test data
-predictions = knn.predict(test_data)
-print("Classification Report:\n", classification_report(test_labels, predictions))
-print("Accuracy:", accuracy_score(test_labels, predictions))
 
-# Confusion matrix creation and visualization
-conf_matrix = confusion_matrix(test_labels, predictions)
+# Confusion matrix generation and visualization
+conf_matrix = confusion_matrix(test_y, test_predictions)
 plt.figure(figsize=(8, 6))
-sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise'], yticklabels=['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise'])
-plt.ylabel('True Label')
+emotions = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']  # Emotion categories
+sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=emotions, yticklabels=emotions)
+plt.ylabel('Actual Label')
 plt.xlabel('Predicted Label')
 plt.title('Confusion Matrix')
-plt.show()
+plt.savefig('confusion_matrix.png')
